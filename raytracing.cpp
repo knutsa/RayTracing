@@ -6,11 +6,12 @@
 using namespace std;
 
 
-const int MAX_DEPTH = 5;
+const int MAX_DEPTH = 5, SAMPLES_PER_PIXEL = 10;
 const int H = 900, W = 1600;
 const double fx = 100.0, fy = 100.0, cx = 800, cy = 450;
 
-default_random_engine RNG{1337};
+random_device rd;
+default_random_engine RNG{rd()};
 uniform_real_distribution U;
 
 class Vec3D {
@@ -39,6 +40,7 @@ class Vec3D {
             arr[2] *= a;
             return *this;
         }
+        Vec3D operator*(const Vec3D& other) const { return Vec3D(arr[0]*other[0], arr[1]*other[1], arr[2]*other[2]); }
         Vec3D operator/(double a) const { return (*this)*(1/a); }
         Vec3D operator/=(double a){ return (*this)*=(1/a);}
 
@@ -54,8 +56,10 @@ const Vec3D SKY_COLOR(1.0, 1.0, 1.0), BACKGROUND_COLOR(0, 0.0, 0.5);
 struct Sphere {
     Vec3D center;
     double radius;
+    Vec3D emissivity; //rgb emmisivity
     //Maybe add optical properties ... absorbtion, diffusive properties ...
-    Sphere(double cx, double cy, double cz, double R) : center(cx, cy, cz), radius(R) {}
+    Sphere(double cx, double cy, double cz, double R) : center(cx, cy, cz), radius(R), emissivity(0.5, 0.5, 0.5) {}
+    Sphere(double cx, double cy, double cz, double R, double er, double eg, double eb) : center(cx, cy, cz), radius(R), emissivity(er, eg, eb) {}
 
     double first_intersection(const Vec3D& source, const Vec3D& dir, double t_min, double t_max){
         //pq-formula
@@ -81,6 +85,7 @@ struct Sphere {
     }
 };
 
+//uv coordinates to lower left corner of pixel
 pair<double, double> inds2uv(int i, int j){
     return pair<double, double>{j, H-1-i};
 }
@@ -89,8 +94,8 @@ Vec3D uv2ray(double u, double v) {
     return Vec3D((u-cx)/fx, (v-cy)/fy, 1.0);
 }
 Vec3D color_free_ray(const Vec3D& source,const Vec3D& dir){
-    // double p = max(dir[1]/dir.norm(), 0.0); //y-coordinate points up
-    double p = 0.5*(dir[1]/dir.norm() + 1.0); //y-coordinate points up
+    double p = max(dir[1]/dir.norm(), 0.0); //y-coordinate points up
+    // double p = 0.5*(dir[1]/dir.norm() + 1.0); //y-coordinate points up
     return SKY_COLOR*p + BACKGROUND_COLOR*(1-p);
 }
 
@@ -108,21 +113,27 @@ Vec3D color_ray(const Vec3D& source,const Vec3D& dir, const vector<Sphere>& scen
         return BACKGROUND_COLOR;
 
     double closest_hit = t_max;
-    Vec3D intersection, normal;
+    Vec3D intersection, normal, emissivity;
 
     for(auto sphere : scene){
         double t = sphere.first_intersection(source, dir, t_min, t_max);
         if(t < closest_hit){
+            auto current_intersection = source+dir*t;
+            auto current_normal = sphere.normal_at(current_intersection);
+            if(dot(current_normal, dir) >= 0) continue; //Light coming from inside
+
             closest_hit = t;
-            intersection = source+dir*t;
-            normal = sphere.normal_at(intersection);
+            intersection = current_intersection;
+            normal = current_normal;
+            emissivity = sphere.emissivity;
         }    
     }
 
     if(closest_hit < t_max){ //Something was hit!
-        // auto new_dir = unit_hemisphere_sample(normal);
+        auto new_dir = unit_hemisphere_sample(normal);
+        return color_ray(intersection, new_dir, scene, depth+1, t_min, t_max)*emissivity;
         // return color_ray(intersection, new_dir, scene, depth+1, t_min, t_max)*0.5;
-        return (normal+1)/2;
+        // return (normal+1)/2;
     }
 
     //Nothing Hit
@@ -130,30 +141,31 @@ Vec3D color_ray(const Vec3D& source,const Vec3D& dir, const vector<Sphere>& scen
 }
 
 
-int main(){
+int main(int argc, char** argv){
+
     Vec3D zero;
     print_vec3d(zero, "ZERO: ");
-
     print_vec3d(SKY_COLOR, "SKY COLOR: ");
     print_vec3d(BACKGROUND_COLOR, "BACKGROUND_COLOR: ");
 
-    vector<double> res(H*W*3);
+    vector<double> img(H*W*3);
 
     vector<Sphere> scene = {
-        //Sphere(0.0, 0.0, 0.0, 1000.0), //Earth
-        Sphere(0.0, 0.0, 5.5, 5.0)
+        Sphere(0.0, -10000.0, 0.0, 9999.0), //Earth
+        Sphere(-1.1, 0.0, 1.6, 1.0, 1.0, 0.0, 0.0),
+        Sphere(1.1, 0.0, 1.6, 1.0, 0.0, 1.0, 0.0),
     };
 
     for(int i = 0;i<H;i++){
         for(int j = 0;j<W;j++){
             auto uv = inds2uv(i, j);
-            auto ray = uv2ray(uv.first, uv.second);
-            // std::cout << ray[1]/ray.norm() << endl;
-            // auto color = color_free_ray(zero, ray);
-            auto color = color_ray(zero, ray, scene);
-            // std::cout << color[0] << " " << color[1] << " " << color[2] << endl;
+            Vec3D avg_color;
+            for(int k = 0;k<SAMPLES_PER_PIXEL;k++){
+                auto ray = uv2ray(uv.first + U(RNG), uv.second + U(RNG));
+                avg_color += color_ray(zero, ray, scene)/SAMPLES_PER_PIXEL;
 
-            for(int k=0;k<3;k++) res[(i*W+j)*3+k] = color[k];
+            }
+            for(int k=0;k<3;k++) img[(i*W+j)*3+k] = avg_color[k];
         }
     }
 
@@ -161,7 +173,6 @@ int main(){
     output.open("img.bin");
     int shape[3] = {H, W, 3};
     output.write(reinterpret_cast<char*>(&shape), sizeof(int)*3);
-    output.write(reinterpret_cast<char*>(res.data()), sizeof(double)*H*W*3);
-
+    output.write(reinterpret_cast<char*>(img.data()), sizeof(double)*img.size());
     std::cout << "Done"<<endl;
 }

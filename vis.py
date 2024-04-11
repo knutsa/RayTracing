@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import sys
 
 
 data = np.fromfile("img.bin", dtype="uint8")
@@ -12,4 +13,7 @@ print("Img max:", img.max())
 print("Img min:", img.min())
 
 plt.imshow(img)
-plt.savefig("img.png")
+filename = "img.png"
+if len(sys.argv) > 1:
+    filename = sys.argv[1]
+plt.savefig(filename)

@@ -8,7 +8,7 @@ using namespace std;
 
 const int MAX_DEPTH = 5, SAMPLES_PER_PIXEL = 10;
 const int H = 900, W = 1600;
-const double fx = 100.0, fy = 100.0, cx = 800, cy = 450;
+const double fx = 500.0, fy = 500.0, cx = 800, cy = 450;
 
 random_device rd;
 default_random_engine RNG{rd()};
@@ -51,7 +51,7 @@ double dot(const Vec3D& x, const Vec3D& y){ return x[0]*y[0]+x[1]*y[1]+x[2]*y[2]
 void print_vec3d(const Vec3D& x, string caption){
     std::cout << caption << "(" <<x[0] << ","<<x[1]<<","<<x[2]<<")"<<endl;
 }
-const Vec3D SKY_COLOR(1.0, 1.0, 1.0), BACKGROUND_COLOR(0, 0.0, 0.5);
+const Vec3D SKY_COLOR(1.0, 1.0, 1.0), BACKGROUND_COLOR(0, 0.0, 0.0);
 
 struct Sphere {
     Vec3D center;
@@ -152,8 +152,9 @@ int main(int argc, char** argv){
 
     vector<Sphere> scene = {
         Sphere(0.0, -10000.0, 0.0, 9999.0), //Earth
-        Sphere(-1.1, 0.0, 1.6, 1.0, 1.0, 0.0, 0.0),
-        Sphere(1.1, 0.0, 1.6, 1.0, 0.0, 1.0, 0.0),
+        Sphere(-1.1, 0.0, 2.0, 1.0, 1.0, 0.0, 0.0),
+        Sphere(1.1, 0.0, 2.0, 1.0, 0.0, 1.0, 0.0),
+        Sphere(0.0, -0.7, 1.3, 0.3, 0.0, 0.0, 1.0),
     };
 
     for(int i = 0;i<H;i++){

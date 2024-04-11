@@ -1,0 +1,4 @@
+*.bin
+*.png
+*.out
+.vscode/*

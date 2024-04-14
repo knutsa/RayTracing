@@ -2,6 +2,8 @@
 #include <vector>
 #include <random>
 #include <fstream>
+#include <memory>
+#include <cassert>
 
 using namespace std;
 
@@ -53,15 +55,69 @@ void print_vec3d(const Vec3D& x, string caption){
 }
 const Vec3D SKY_COLOR(1.0, 1.0, 1.0), BACKGROUND_COLOR(0, 0.0, 0.0);
 
+Vec3D unit_sphere_sample(){
+    double z = 2*U(RNG)-1, phi = U(RNG)*2*M_PI;
+    double xy_radius = sqrt(1 - z*z);
+    return Vec3D(xy_radius*cos(phi), xy_radius*sin(phi), z);
+}
+Vec3D unit_hemisphere_sample(const Vec3D& n){
+    auto res = unit_sphere_sample();
+
+    if(dot(res,n) < 0) res *= -1;
+    return res;
+}
+Vec3D lambertian_sample(const Vec3D& n){
+    auto res = n + unit_sphere_sample();
+    res /= res.norm();
+    return res;
+}
+
+struct MaterialBase { //Abstract base struct for optic material
+    virtual Vec3D scatter(const Vec3D& normal, const Vec3D& ray_dir) = 0;
+    MaterialBase() {}
+};
+struct UniDiffusionMaterial : MaterialBase {
+    Vec3D scatter(const Vec3D& normal, const Vec3D& ray_dir) override {
+        return unit_hemisphere_sample(normal);
+    }
+    UniDiffusionMaterial() {}
+};
+struct LambertianMaterial : MaterialBase {
+    Vec3D scatter(const Vec3D& normal, const Vec3D& ray_dir) override {
+        return lambertian_sample(normal);
+    }
+    LambertianMaterial() {}
+};
+struct BlankMaterial : MaterialBase {
+    double fuzziness;
+
+    BlankMaterial() : fuzziness(0.0) {}
+    BlankMaterial(double fuzziness) : fuzziness(fuzziness) {}
+
+    Vec3D scatter(const Vec3D& normal, const Vec3D& ray_dir) override {
+
+        auto res = ray_dir - normal*(2*dot(ray_dir, normal));
+        if(fuzziness == 0) return res;
+        res += unit_sphere_sample()*fuzziness;
+        if(dot(res, normal) < 0) return Vec3D();
+        return res;
+    }
+};
+//...Refractive Material...
+
 struct Sphere {
     Vec3D center;
     double radius;
-    Vec3D emissivity; //rgb emmisivity
-    //Maybe add optical properties ... absorbtion, diffusive properties ...
-    Sphere(double cx, double cy, double cz, double R) : center(cx, cy, cz), radius(R), emissivity(0.5, 0.5, 0.5) {}
-    Sphere(double cx, double cy, double cz, double R, double er, double eg, double eb) : center(cx, cy, cz), radius(R), emissivity(er, eg, eb) {}
+    Vec3D albedo; //rgb albedo
+    shared_ptr<MaterialBase> material; //Material properties for diffusion/reflection/refraction
 
-    double first_intersection(const Vec3D& source, const Vec3D& dir, double t_min, double t_max){
+    Sphere(double cx, double cy, double cz, double R) :
+        center(cx, cy, cz), radius(R), albedo(0.5, 0.5, 0.5), material(make_shared<LambertianMaterial>()) { }
+    Sphere(vector<double> center, double R, vector<double> albedo, shared_ptr<MaterialBase> mat) :
+        center(center[0], center[1], center[2]), radius(R), albedo(albedo[0], albedo[1], albedo[2]), material(mat) {}
+
+
+    double first_intersection(const Vec3D& source, const Vec3D& dir, double t_min, double t_max) const {
         //pq-formula
         double p_half = dot(dir, source-center)/dir.norm2(),
             q = ((source-center).norm2()-radius*radius)/dir.norm2();
@@ -78,7 +134,7 @@ struct Sphere {
         
         return INFINITY;
     }
-    Vec3D normal_at(const Vec3D& x){
+    Vec3D normal_at(const Vec3D& x) const {
         auto res = x - center;
         res /= res.norm();
         return res;
@@ -89,23 +145,14 @@ struct Sphere {
 pair<double, double> inds2uv(int i, int j){
     return pair<double, double>{j, H-1-i};
 }
+//u, v horizontal, resp vertical coordinates in image
 Vec3D uv2ray(double u, double v) {
-    //u, v horizontal, resp vertical coordinates in image
     return Vec3D((u-cx)/fx, (v-cy)/fy, 1.0);
 }
 Vec3D color_free_ray(const Vec3D& source,const Vec3D& dir){
-    double p = max(dir[1]/dir.norm(), 0.0); //y-coordinate points up
-    // double p = 0.5*(dir[1]/dir.norm() + 1.0); //y-coordinate points up
+    // double p = max(dir[1]/dir.norm(), 0.0); //y-coordinate points up
+    double p = 0.5*(dir[1]/dir.norm() + 1.0); //y-coordinate points up
     return SKY_COLOR*p + BACKGROUND_COLOR*(1-p);
-}
-
-Vec3D unit_hemisphere_sample(const Vec3D& n){
-    double z = 2*U(RNG)-1, phi = U(RNG)*2*M_PI;
-    double xy_radius = sqrt(1 - z*z);
-    auto res = Vec3D(xy_radius*cos(phi), xy_radius*sin(phi), z);
-
-    if(dot(res,n) < 0) res *= -1;
-    return res;
 }
 
 Vec3D color_ray(const Vec3D& source,const Vec3D& dir, const vector<Sphere>& scene, int depth = 0, double t_min = 0.0, double t_max = INFINITY){
@@ -113,25 +160,24 @@ Vec3D color_ray(const Vec3D& source,const Vec3D& dir, const vector<Sphere>& scen
         return BACKGROUND_COLOR;
 
     double closest_hit = t_max;
-    Vec3D intersection, normal, emissivity;
+    const Sphere * hit;
 
-    for(auto sphere : scene){
-        double t = sphere.first_intersection(source, dir, t_min, t_max);
+    for(int i = 0;i<scene.size();i++){
+        double t = scene[i].first_intersection(source, dir, t_min, t_max);
         if(t < closest_hit){
-            auto current_intersection = source+dir*t;
-            auto current_normal = sphere.normal_at(current_intersection);
-            if(dot(current_normal, dir) >= 0) continue; //Light coming from inside
-
             closest_hit = t;
-            intersection = current_intersection;
-            normal = current_normal;
-            emissivity = sphere.emissivity;
+            hit = &scene[i];
         }    
     }
 
     if(closest_hit < t_max){ //Something was hit!
-        auto new_dir = unit_hemisphere_sample(normal);
-        return color_ray(intersection, new_dir, scene, depth+1, t_min, t_max)*emissivity;
+        auto intersection = source+dir*closest_hit;
+        auto normal = hit->normal_at(intersection);
+        auto new_dir = hit->material->scatter(normal, dir);
+        if(new_dir.norm2() == 0) return BACKGROUND_COLOR; //Absorbed by medium
+
+        return color_ray(intersection, new_dir, scene, depth+1, t_min, t_max)*hit->albedo;
+        //auto new_dir = lambertian_sample(normal);
         // return color_ray(intersection, new_dir, scene, depth+1, t_min, t_max)*0.5;
         // return (normal+1)/2;
     }
@@ -149,12 +195,13 @@ int main(int argc, char** argv){
     print_vec3d(BACKGROUND_COLOR, "BACKGROUND_COLOR: ");
 
     vector<double> img(H*W*3);
+    LambertianMaterial my_mat;
 
     vector<Sphere> scene = {
         Sphere(0.0, -10000.0, 0.0, 9999.0), //Earth
-        Sphere(-1.1, 0.0, 2.0, 1.0, 1.0, 0.0, 0.0),
-        Sphere(1.1, 0.0, 2.0, 1.0, 0.0, 1.0, 0.0),
-        Sphere(0.0, -0.7, 1.3, 0.3, 0.0, 0.0, 1.0),
+        Sphere({-1.1, 0.0, 2.0}, 1.0, {0.5, 0.5, 0.5}, make_shared<BlankMaterial>(0.5)),
+        Sphere({1.1, 0.0, 2.0}, 1.0, {0.5, 0.5, 0.5}, make_shared<BlankMaterial>(0.5)),
+        Sphere({0.0, -0.7, 1.3}, 0.3, {0.5, 0.5, 0.5}, make_shared<BlankMaterial>(0.5)),
     };
 
     for(int i = 0;i<H;i++){
@@ -163,7 +210,7 @@ int main(int argc, char** argv){
             Vec3D avg_color;
             for(int k = 0;k<SAMPLES_PER_PIXEL;k++){
                 auto ray = uv2ray(uv.first + U(RNG), uv.second + U(RNG));
-                avg_color += color_ray(zero, ray, scene)/SAMPLES_PER_PIXEL;
+                avg_color += color_ray(zero, ray, scene, 0, 0.0001)/SAMPLES_PER_PIXEL;
 
             }
             for(int k=0;k<3;k++) img[(i*W+j)*3+k] = avg_color[k];

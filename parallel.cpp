@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
         int shape[3] = {camera.H, camera.W, 3};
         output.write(reinterpret_cast<char*>(shape), sizeof(int)*3);
         output.write(reinterpret_cast<char*>(merged.data()), merged.size()*sizeof(double));
-        std::cout << "Done! (" << P << " processors used)" <<endl;
+        std::cout << "Done! ( in total " << P*samples_per_pixel << " rays cast from " << P << " processors)" <<endl;
     }
 
     MPI_Finalize();

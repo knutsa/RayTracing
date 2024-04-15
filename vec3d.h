@@ -10,7 +10,7 @@ class Vec3D {
         Vec3D(double x, double y, double z) : arr{x,y,z} {}
         Vec3D() : arr{0,0,0} {}
 
-        double operator[](int i) const {return arr[i];}
+        double operator[](int i) const {return arr[i];}        
         Vec3D operator+(const Vec3D& other) const {return Vec3D(arr[0]+other.arr[0], arr[1]+other.arr[1], arr[2]+other.arr[2]);}
         Vec3D operator+=(const Vec3D& other){
             arr[0] += other.arr[0];

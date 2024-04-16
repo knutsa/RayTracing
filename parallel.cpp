@@ -22,6 +22,7 @@ int main(int argc, char **argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     Camera camera;
+    camera.move({1,0,0}, {1,1,0});
 
     vector<Sphere> scene;
     SceneParams scene_params;

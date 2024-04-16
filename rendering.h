@@ -9,6 +9,9 @@ class Camera {
         const int H, W;
         const double fx, fy, cx, cy;
         const Vec3D SKY_COLOR, BACKGROUND_COLOR;
+
+        Mat3D Rot;
+        Vec3D tvec;
         // const int MAX_DEPTH = 5;
         // const int H = 900, W = 1600;
         // const double fx = 500.0, fy = 500.0, cx = 800, cy = 450;
@@ -23,14 +26,23 @@ class Camera {
         }
         //u, v horizontal, resp vertical coordinates in image
         Vec3D uv2ray(double u, double v) {
-            return Vec3D((u-cx)/fx, (v-cy)/fy, 1.0);
+            return Rot.transform({(u-cx)/fx, (v-cy)/fy, 1.0});
+            // return Vec3D((u-cx)/fx, (v-cy)/fy, 1.0);
         }
+        void move(const Vec3D& rvec, const Vec3D& tvec) {
+            Rot = matmul3D(Rodriguez_formula(rvec), Rot);
+            this->tvec += tvec;
+        }
+        void set_pos(const Vec3D& rvec, const Vec3D& tvec) {
+            Rot = Rodriguez_formula(rvec);
+            this->tvec = tvec;
+        }
+
         Vec3D color_free_ray(const Vec3D& source,const Vec3D& dir){
             // double p = max(dir[1]/dir.norm(), 0.0); //y-coordinate points up
             double p = 0.5*(dir[1]/dir.norm() + 1.0); //y-coordinate points up
             return SKY_COLOR*p + BACKGROUND_COLOR*(1-p);
         }
-
         Vec3D color_ray(const Vec3D& source,const Vec3D& dir, const std::vector<Sphere>& scene, double t_min = 0.0, double t_max = INFINITY, int depth = 0){
             if(depth > MAX_DEPTH)
                 return BACKGROUND_COLOR;
@@ -64,7 +76,6 @@ class Camera {
 
         std::vector<double> render(const std::vector<Sphere>& scene, int samples_per_pixel = 5) {
             std::vector<double> img(H*W*3);
-            Vec3D zero;
 
             for(int i = 0;i<H;i++){
                 for(int j = 0;j<W;j++){
@@ -72,7 +83,7 @@ class Camera {
                     Vec3D avg_color;
                     for(int k = 0;k<samples_per_pixel;k++){
                         auto ray = uv2ray(uv.first + uniform_double(), uv.second + uniform_double());
-                        avg_color += color_ray(zero, ray, scene, 0.0001)/samples_per_pixel;
+                        avg_color += color_ray(tvec, ray, scene, 0.0001)/samples_per_pixel;
                     }
                     for(int k=0;k<3;k++) img[(i*W+j)*3+k] = avg_color[k];
                 }

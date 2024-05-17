@@ -2,7 +2,7 @@
 #define rendering
 
 #include "geometry.h"
-
+#include <vector>
 class Camera {
     public:
         const int MAX_DEPTH;
@@ -90,6 +90,61 @@ class Camera {
             }
             return img;
         }
+
+        std::vector<double> render_range_adaptive(const std::vector<Sphere>& scene, int start, int end, double K = 0.05) {
+            std::vector<double> img;
+
+            for(int index = start; index < end; index++) {
+                    int i = index / W;
+                    int j = index % W;
+
+                    auto uv = inds2uv(i, j);
+                    
+                    double I = K + 1.0;
+                    
+                    int num_samples = 0;
+                    Vec3D sample_sum;
+                    Vec3D squared_sum;
+                    double illuminance_sum = 0.0;
+                    double illuminance_squared_sum = 0.0;
+
+
+                    bool converged = false;
+                    while (!converged) {
+                        auto ray = uv2ray(uv.first + uniform_double(), uv.second + uniform_double());
+                        auto sample = color_ray(tvec, ray, scene, 0.0001);
+
+                        sample_sum += sample;
+                        double illuminance = sample.illuminance();
+                        illuminance_sum += illuminance;
+                        illuminance_squared_sum += illuminance*illuminance;
+                        num_samples += 1;
+                        
+
+
+                        if (num_samples % 16 == 0) {
+                            
+                            double mean = illuminance_sum / (double)num_samples;
+
+                            double variance = 1.0 / ((double) num_samples - 1) * (illuminance_squared_sum - illuminance_sum*illuminance_sum / (double) num_samples);
+                            double I = 1.96 * sqrt(variance / (double) num_samples);
+                            converged =  I <= mean * K;
+                        }
+
+                    }
+                    Vec3D avg_color = sample_sum / (double)num_samples;
+                    // int rank;
+                    // MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+                    // if (rank == 1)
+                    //     std::cout << "num_samples: " << num_samples << "color: " << avg_color[0] <<" " <<avg_color[1] << " " << avg_color[2] << std::endl;
+
+                    for(int k=0;k<3;k++) img.push_back(avg_color[k]);
+                
+            } 
+            return img;
+
+        }
+
 
 };
 

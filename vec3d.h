@@ -36,6 +36,7 @@ class Vec3D {
 
         double norm2() const {return arr[0]*arr[0]+arr[1]*arr[1]+arr[2]*arr[2];}
         double norm() const {return sqrt(this->norm2());}
+        double illuminance() const {return (arr[0] * 0.3) + (arr[1] * 0.59) + (arr[2] * 0.11);}
 };
 double dot(const Vec3D& x, const Vec3D& y){ return x[0]*y[0]+x[1]*y[1]+x[2]*y[2]; }
 void print_vec3D(const Vec3D& x, std::string caption){

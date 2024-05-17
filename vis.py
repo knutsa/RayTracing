@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
+from PIL import Image
 
 
 data = np.fromfile("img.bin", dtype="uint8")
@@ -17,3 +18,6 @@ filename = "img.png"
 if len(sys.argv) > 1:
     filename = sys.argv[1]
 plt.savefig(filename)
+im = Image.fromarray(np.array(256*img).astype(np.uint8))
+
+im.save(filename)

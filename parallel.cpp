@@ -161,7 +161,7 @@ void generate_image_fixed(const Camera& camera, const vector<Sphere>& scene, int
     if(rank == 0){
         for(int i = 0;i<merged.size();i++) merged[i] /= P;
         auto elapsed = duration_cast<nanoseconds>(high_resolution_clock::now() - start).count() / 1e9;
-        save_img(img, {camera.H, camera.W, 3}, fname);
+        save_img(merged, {camera.H, camera.W, 3}, fname);
 #if VERBOSE >= 1
         std::cout << "Image generated. Time: " << elapsed << "s" << endl;
 #endif
@@ -227,7 +227,7 @@ int main(int argc, char **argv) {
     double tolerance = 0.01;
     int n_small_balls = 100;
     Camera camera;
-    camera.move({1,0,0}, {1,1,0});
+    // camera.move({1,0,0}, {1,1,0});
 
     int num_ranges; 
     int P, rank;

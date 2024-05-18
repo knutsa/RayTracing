@@ -1,5 +1,6 @@
 *.bin
 *.png
 *.out
+*.txt
 .vscode/*
 .editorconfig

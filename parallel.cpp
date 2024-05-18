@@ -4,119 +4,99 @@
 #include <chrono>
 #include <deque>
 
+#define VERBOSE 1
 
 #define WORK 1
 #define DIE 2
-
-
 
 using namespace std::chrono;
 
 using namespace std;
 
 
-
-
-
-
-
-
-vector<double> master(int num_processors, int num_ranges, int num_pixels) {
+vector<double> master(int num_processors, int num_ranges,const Camera& camera,const vector<Sphere>& scene, double tolerance, int max_samples) {
     
-    // Algorithm only works with fewer processors than pixels
-    assert(num_ranges <= num_pixels);
+    int num_pixels = camera.H*camera.W;
+    assert(num_ranges <= num_pixels); // Algorithm only works with fewer processors than pixels
     assert(num_ranges >= num_processors);
 
-    
-    
-    
-    
-    deque<pair<int, int>> ranges;
+    int range_size = num_pixels/num_ranges;
+    int num_rendered = 0;
+    vector<double> img(num_pixels*4, 0.0);
+    int active_processors = 1;
 
-    int range_size = 1 + (num_pixels - 1) / (num_ranges);
-
-    // cout << "Seeding work..." << endl;
-    for(int work = 0; work < num_ranges; work++) {
-        ranges.emplace_back(work*range_size, min((work+1)*range_size, num_pixels));
+    for(int processor = 1; processor < num_processors; processor++) { // Seed work
+        if(num_rendered < num_pixels){
+            int work[2] = {num_rendered, min(num_rendered+range_size, num_pixels)};
+            num_rendered = work[1];
+            MPI_Send(&work, 2, MPI_INT, processor, WORK, MPI_COMM_WORLD);
+            active_processors++;
+        } else
+            MPI_Send(0, 0, MPI_INT, processor, DIE, MPI_COMM_WORLD);
     }
-    vector<double> img(num_pixels*3, 0.0);
-    
-
-    // Seed work
-    for(int processor = 1; processor < min(num_processors, num_ranges+1); processor++) {
-        auto [start, end] = ranges.front();
-        ranges.pop_front();
-        int work[2] = {start, end};
-        // cout << "Sending work " << work[0] << "-" << work[1] << endl;
-        MPI_Send(&work, 2, MPI_INT, processor, WORK, MPI_COMM_WORLD);
-        
-    }
-    // cout << "Handling new work..." << endl;
-    // Recieve and send new pieces of work while there is still work to be done
-    vector<double> result(range_size*3 + 2, 0);
+    vector<double> result(range_size*4 + 2, 0); // Recieve and send new pieces of work while there is still work to be done
     MPI_Status status;
-    while  (!ranges.empty()) {
+    MPI_Request request;
+    int flag;
+    while  (num_rendered < num_pixels) {
         
-        // Recieve a completed piece of work
-        MPI_Recv(static_cast<void*>(result.data()), range_size*3+2, MPI_DOUBLE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-        int range_start = round(result[0]);
-        int range_end = round(result[1]);
-        int true_range_size = range_end - range_start;
-
-        for(int i = 0; i < true_range_size*3; i++) {
-            img[i + range_start*3] = result[2 + i];
+        MPI_Irecv(result.data(), result.size(), MPI_DOUBLE, MPI_ANY_SOURCE, WORK, MPI_COMM_WORLD, &request); // Recieve a completed piece of work async
+        MPI_Test(&request, &flag, &status);
+        while(!flag){ //Waiting for completed range from workers
+            if(num_rendered<num_pixels){
+                auto rendered = camera.render_range_adaptive(scene, num_rendered, num_rendered+1, tolerance, max_samples);
+                for(int i = 0;i<rendered.size();i++) img[num_rendered*4 + i] = rendered[i];
+                num_rendered++;
+            }
+            MPI_Test(&request, &flag, &status);
         }
 
-        // Send a new piece of work
-        auto [start, end] = ranges.front();
-        ranges.pop_front();
-        int work[2] = {start, end};
-        MPI_Send(&work, 2, MPI_INT, status.MPI_SOURCE, WORK, MPI_COMM_WORLD);
+        int range_start = round(result[0]), range_end = round(result[1]);
+        for(int i = 0;i<(range_end-range_start)*4;i++)
+            img[i + range_start*4] = result[2 + i];
 
+        if(num_rendered < num_pixels){ // Send a new piece of work
+            int work[2] = {num_rendered, min(num_rendered+range_size, num_pixels)};
+            num_rendered = work[1];
+            MPI_Send(&work, 2, MPI_INT, status.MPI_SOURCE, WORK, MPI_COMM_WORLD);
+        } else{
+            MPI_Send(0, 0, MPI_INT, status.MPI_SOURCE, DIE, MPI_COMM_WORLD);
+            active_processors--;
+        }
     }
 
-    // cout << "Recieving Last Process Work..." << endl;
     // Receive the last pieces of work
-    for(int processor = 1; processor < min(num_processors, num_ranges+1); processor++) {
-        // Recieve a completed piece of work
-        // cout << "Processor " << processor << endl;
-        MPI_Recv(static_cast<void*>(result.data()), range_size*3+2, MPI_DOUBLE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-        // cout << "Recieved.." << endl;
-        int range_start = round(result[0]);
-        int range_end = round(result[1]);
-        int true_range_size = range_end - range_start;
+    while(active_processors > 1){
+        MPI_Recv(result.data(), result.size(), MPI_DOUBLE, MPI_ANY_SOURCE, WORK, MPI_COMM_WORLD, &status);
+        int range_start = round(result[0]), range_end = round(result[1]);
         
-        for(int i = 0; i < true_range_size*3; i++) {
-            
-            img[i + range_start*3] = result[2 + i];
-        }
+        for(int i = 0; i < (range_end-range_start)*4; i++)
+            img[i + range_start*4] = result[2 + i];
         MPI_Send(0, 0, MPI_INT, status.MPI_SOURCE, DIE, MPI_COMM_WORLD);
+        active_processors--;
     }
-
 
     return img;
 }
 
-void slave(Camera& camera, vector<Sphere>& scene, int rank, double tolerance) {
+void slave(const Camera& camera,const vector<Sphere>& scene, int rank, double tolerance, int max_samples) {
     MPI_Status status;
 
-    // cout << "Initiated Slave Processor " << rank << endl;
     while (true) {
         int work[2];
         MPI_Recv(&work, 2, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-        cout << "Slave Processor " << rank << " Recieved work " << work[0] << "-" << work[1] << endl;
-        if (status.MPI_TAG == DIE) {
+        if (status.MPI_TAG == DIE)
             return;
-        }
-        int msg_len = 3*(work[1] - work[0]) + 2;
+#if VERBOSE >= 2
+        std::cout << "Slave Processor " << rank << " Recieved work " << work[0] << "-" << work[1] << endl;
+#endif
 
         vector<double> result;
         result.push_back((double)work[0]);
         result.push_back((double)work[1]);
-        auto rendered = camera.render_range_adaptive(scene, work[0], work[1], tolerance);
+        auto rendered = camera.render_range_adaptive(scene, work[0], work[1], tolerance, max_samples);
         result.insert(result.end(), rendered.begin(), rendered.end());
-        MPI_Send(static_cast<void*>(result.data()), msg_len, MPI_DOUBLE, 0, WORK, MPI_COMM_WORLD);
-
+        MPI_Send(result.data(), result.size(), MPI_DOUBLE, 0, WORK, MPI_COMM_WORLD);
     }
 }
 
@@ -142,22 +122,58 @@ vector<Sphere> generate_common_scene(int n_small_balls = 100, double small_r = 0
     return scene;
 }
 
+void save_img(vector<double>& img, vector<int> shape, string fname){
+    ofstream output;
+    output.open(fname+ ".bin");
+    output.write(reinterpret_cast<char*>(shape.data()), sizeof(int)*3);
+    output.write(reinterpret_cast<char*>(img.data()), img.size()*sizeof(double));
+}
 
-
-double timing_seconds(double tolerance, int groups_per_processor, int num_runs=10) {
-
-
+void generate_image_adaptive(const Camera& camera, const vector<Sphere>& scene, int num_ranges, double tolerance, int max_samples, string fname = "image_adaptive") {
     int P, rank;
-    MPI_Status* status;
     MPI_Comm_size(MPI_COMM_WORLD, &P);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-    Camera camera;
-    camera.move({1,0,0}, {1,1,0});
+    
+    if (rank == 0) {
+        auto start = high_resolution_clock::now();
+        auto img = master(P, num_ranges, camera, scene, tolerance, max_samples);
+        auto elapsed = chrono::duration_cast<chrono::nanoseconds>(high_resolution_clock::now()-start).count() / 1e9;
+#if VERBOSE >= 1
+        std::cout << "Done!" << "Time: " << elapsed << "s" << " total pixels: " << camera.H*camera.W << endl;
+#endif
+        save_img(img, {camera.H, camera.W, 4}, fname);
+    } else{
+        slave(camera, scene, rank, tolerance, max_samples);
+    }
+}
+void generate_image_fixed(const Camera& camera, const vector<Sphere>& scene, int samples_per_processor, string fname = "image_fixed"){
+    int P, rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &P);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    
+    auto start = high_resolution_clock::now();
+    auto img = camera.render(scene, samples_per_processor);
+    vector<double> merged;
+    if(rank == 0)
+        merged.resize(img.size());
+    
+    MPI_Reduce(img.data(), merged.data(), img.size(), MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(rank == 0){
+        for(int i = 0;i<merged.size();i++) merged[i] /= P;
+        auto elapsed = duration_cast<nanoseconds>(high_resolution_clock::now() - start).count() / 1e9;
+        save_img(img, {camera.H, camera.W, 3}, fname);
+#if VERBOSE >= 1
+        std::cout << "Image generated. Time: " << elapsed << "s" << endl;
+#endif
+    }
+}
+double timing_seconds_adaptive(const Camera& camera, const vector<Sphere>& scene, double tolerance, int max_samples, int num_ranges, int num_runs=10) {
+    int P, rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &P);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     double sum_time = 0;
 
     for(int run = 1; run <= num_runs; run++) {
-        vector<Sphere> scene = generate_common_scene();
         
         int num_pixels = camera.H * camera.W;
 
@@ -165,81 +181,83 @@ double timing_seconds(double tolerance, int groups_per_processor, int num_runs=1
 
         if (rank == 0) {
             auto start = high_resolution_clock::now();
-            auto img = master(P, P*groups_per_processor, num_pixels);
+            auto img = master(P, num_ranges, camera, scene, tolerance, max_samples);
             auto end = high_resolution_clock::now();
             sum_time += (double)duration_cast<microseconds>(end - start).count() / 1000000.0;
-            cout << "Average time: " << sum_time / (double)run << "s" << endl;
+#if VERBOSE >= 1
+            std::cout << "Average time: " << sum_time / (double)run << "s" << endl;
+#endif
         } else{
-            slave(camera, scene, rank, tolerance);
+            slave(camera, scene, rank, tolerance, max_samples);
         }
     }
     return sum_time / (double)num_runs;
-
 }
-
-
-void generate_image(int groups_per_processor, double tolerance, string fname = "image") {
+double timing_seconds_fixed(const Camera& camera, const vector<Sphere>& scene, int samples_per_processor, int num_runs = 10){
     int P, rank;
-    MPI_Status* status;
     MPI_Comm_size(MPI_COMM_WORLD, &P);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-    Camera camera;
-    camera.move({1,0,0}, {1,1,0});
-
-    vector<Sphere> scene = generate_common_scene();
     
-    int num_pixels = camera.H * camera.W;
-    if (rank == 0) {
-        auto img = master(P, P*groups_per_processor, num_pixels);
-        std::cout << "Done!";
+    double sum_time = 0.0;
+
+    for(int run = 1;run<=num_runs;run++){
+        MPI_Barrier(MPI_COMM_WORLD);
+        auto start = high_resolution_clock::now();
+        auto img = camera.render(scene, samples_per_processor);
+        vector<double> merged;
+        if(rank == 0)
+            merged.resize(img.size());
         
-        ofstream output;
-        output.open(fname+ ".bin");
-        int shape[3] = {camera.H, camera.W, 3};
-        output.write(reinterpret_cast<char*>(shape), sizeof(int)*3);
-        output.write(reinterpret_cast<char*>(img.data()), img.size()*sizeof(double));
-
-    } else{
-        slave(camera, scene, rank, tolerance);
+        MPI_Reduce(img.data(), merged.data(), img.size(), MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if(rank == 0){
+            for(int i = 0;i<merged.size();i++) merged[i] /= P;
+            sum_time += duration_cast<nanoseconds>(high_resolution_clock::now() - start).count() / 1e9;
+#if VERBOSE >= 1
+            std::cout << "Average time: " << sum_time / (double)run << "s" << endl;
+#endif
+        }
     }
+    return sum_time / (double)num_runs;
 }
-
 
 int main(int argc, char **argv) {
 
-
-    int groups_per_processor = 4;
-    double tolerance = 0.05;
-    if(argc > 1)
-        tolerance = stod(argv[1]);
-    if(argc > 2)
-        groups_per_processor = stoi(argv[2]);
-    
-
+    int num_runs = 5;
+    int samples_per_pixel = 40;
+    double tolerance = 0.01;
     int n_small_balls = 100;
-    double small_r = 0.1;
+    Camera camera;
+    camera.move({1,0,0}, {1,1,0});
 
+    int num_ranges; 
+    int P, rank;
     MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &P);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    int samples_per_processor = (int) ceil(samples_per_pixel/ (double) P);
+    int max_samples = samples_per_processor*P;
+    auto scene = generate_common_scene(n_small_balls);
+    vector<double> times;
+    vector<int> ranges_vec;
 
-    generate_image(groups_per_processor, tolerance);
+    for(num_ranges = P;num_ranges<camera.H*camera.W; num_ranges *= 10){
+        times.push_back(timing_seconds_adaptive(camera, scene, tolerance, max_samples, num_ranges, num_runs));
+        ranges_vec.push_back(num_ranges);
+    }
+    generate_image_adaptive(camera, scene, 800, tolerance, max_samples, "adaptive_"+to_string(P)+"_"+to_string(samples_per_processor)+"_"+to_string(tolerance));
+    double time_fixed = timing_seconds_fixed(camera, scene, samples_per_processor, num_runs);
+    generate_image_fixed(camera, scene, samples_per_processor, "fixed_"+to_string(P)+"_"+to_string(samples_per_processor));
 
-
-    // auto img = camera.render(scene, samples_per_pixel);
-    // vector<double> merged;
-    // if(rank == 0)
-    //     merged.resize(img.size());
-    
-    // MPI_Reduce(img.data(), merged.data(), img.size(), MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    // if(rank == 0){
-    //     for(int i = 0;i<merged.size();i++) merged[i] /= P;
-    //     ofstream output;
-    //     output.open("img.bin");
-    //     int shape[3] = {camera.H, camera.W, 3};
-    //     output.write(reinterpret_cast<char*>(shape), sizeof(int)*3);
-    //     output.write(reinterpret_cast<char*>(merged.data()), merged.size()*sizeof(double));
-    //     std::cout << "Done! In total " << P*samples_per_pixel << " rays per pixel cast from " << P << " processors." <<endl;
-    // }
+    if(rank == 0){
+        ofstream output;
+        output.open("data"+to_string(P)+"_"+to_string(samples_per_processor)+"_"+to_string(tolerance)+".txt");
+        output << "Num runs used:"<<to_string(num_runs)<<"\n";
+        output<<"Adaptive avg times:\n";
+        for(int i = 0;i<ranges_vec.size();i++){
+            output << "\t" << "num_ranges="<<ranges_vec[i] << ", " << "avg_time="<<times[i]<<"s\n";
+        }
+        output << "Fixed avg time:" << time_fixed << "s";
+    }
 
     MPI_Finalize();
 }

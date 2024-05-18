@@ -27,6 +27,10 @@ im.save(outp_fn + ".png")
 
 if counts is not None:
     print("Counts: ", counts.shape, " min: ", counts.min(), " max: ", counts.max())
-    plt.imshow(counts, vmax=min(counts.mean()*5, counts.max()))
-    plt.colorbar()
-    plt.savefig(outp_fn + "_sample_counts.png")
+    vmax=min(counts.mean()*5, counts.max())
+    plt.imshow(counts, vmax=vmax)
+    # plt.colorbar()
+    # plt.show()
+    plt.axis("off")
+    plt.savefig(outp_fn + "_sample_counts.png", bbox_inches="tight")
+    # Image.fromarray(np.repeat((counts/vmax*256)[:,:,None], 3, axis=2).astype(np.uint8)).save(outp_fn + "_sample_counts.png")

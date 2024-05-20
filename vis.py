@@ -7,6 +7,7 @@ from PIL import Image
 inp_fn = "image"
 if len(sys.argv) > 1:
     inp_fn = sys.argv[1]
+    if inp_fn.endswith(".bin"): inp_fn = inp_fn[:-4]
 
 data = np.fromfile(inp_fn + ".bin" , dtype="uint8")
 shape = np.frombuffer(data[:(3*4)], dtype="int32")

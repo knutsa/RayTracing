@@ -116,7 +116,7 @@ class Camera {
                     illuminance_squared_sum += illuminance*illuminance;
                     num_samples += 1;
 
-                    if (num_samples % 1 == 0) {
+                    if (num_samples % 1 == 0 && num_samples >= 4) {
                         double mean = illuminance_sum / (double)num_samples;
                         double variance = 1.0 / ((double) num_samples - 1) * (illuminance_squared_sum - illuminance_sum*illuminance_sum / (double) num_samples);
                         double I = 1.96 * sqrt(variance / (double) num_samples);

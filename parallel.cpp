@@ -259,47 +259,51 @@ double timing_seconds_fixed(const Camera &camera, const vector<Sphere> &scene, i
 
 int main(int argc, char **argv)
 {
-
-    int num_runs = 5;
     int samples_per_pixel = 40;
     double tolerance = 0.01;
     int n_small_balls = 100;
     Camera camera;
     camera.move({1, 0, 0}, {1, 1, 0});
 
-    int num_ranges;
     int P, rank;
     MPI_Init(&argc, &argv);
     MPI_Comm_size(MPI_COMM_WORLD, &P);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     auto scene = generate_common_scene(n_small_balls);
-    vector<double> times;
-    vector<int> ranges_vec;
 
-    for (num_ranges = P; num_ranges < camera.H * camera.W; num_ranges *= 10)
-    {
-        times.push_back(timing_seconds_adaptive(camera, scene, tolerance, samples_per_pixel, num_ranges, num_runs));
-        ranges_vec.push_back(num_ranges);
-    }
-    // generate_image_adaptive(camera, scene, 800, tolerance, samples_per_pixel, "adaptive_" + to_string(P) + "_" + to_string(samples_per_pixel) + "_" + to_string(tolerance));
-    double time_fixed = timing_seconds_fixed(camera, scene, samples_per_pixel, num_runs);
-    // generate_image_fixed(camera, scene, samples_per_pixel, "fixed_" + to_string(P) + "_" + to_string(samples_per_pixel));
+    if(argc > 1){ //Generate output image
+        string image_name = argv[1];
+        generate_image_adaptive(camera, scene, 800, tolerance, samples_per_pixel, image_name + "adaptive_P="+to_string(P));
+        generate_image_fixed(camera, scene, samples_per_pixel, image_name + "fixed_P="+to_string(P));
+    } else { //Benchmarks
+        int num_runs = 5;
+        int num_ranges;
+        vector<double> times;
+        vector<int> ranges_vec;
 
-    if (rank == 0)
-    {
-        string fn = "data" + to_string(P) + "_" + to_string(samples_per_pixel) + "_" + to_string(tolerance) + ".txt";
-        ofstream output;
-        output.open(fn);
-        output << "Num runs used:" << to_string(num_runs) << "\n";
-        output << "Adaptive avg times:\n";
-        for (int i = 0; i < ranges_vec.size(); i++)
+        for (num_ranges = P; num_ranges < camera.H * camera.W; num_ranges *= 10)
         {
-            output << "\t" << "num_ranges=" << ranges_vec[i] << ", " << "avg_time=" << times[i] << "s\n";
+            times.push_back(timing_seconds_adaptive(camera, scene, tolerance, samples_per_pixel, num_ranges, num_runs));
+            ranges_vec.push_back(num_ranges);
         }
-        output << "Fixed avg time:" << time_fixed << "s";
+        double time_fixed = timing_seconds_fixed(camera, scene, samples_per_pixel, num_runs);
+
+        if (rank == 0)
+        {
+            string fn = "data" + to_string(P) + "_" + to_string(samples_per_pixel) + "_" + to_string(tolerance) + ".txt";
+            ofstream output;
+            output.open(fn);
+            output << "Num runs used:" << to_string(num_runs) << "\n";
+            output << "Adaptive avg times:\n";
+            for (int i = 0; i < ranges_vec.size(); i++)
+            {
+                output << "\t" << "num_ranges=" << ranges_vec[i] << ", " << "avg_time=" << times[i] << "s\n";
+            }
+            output << "Fixed avg time:" << time_fixed << "s";
 #if VERBOSE >= 1
-        std::cout << "Done! Data saved to: " << fn << endl;
+            std::cout << "Done! Data saved to: " << fn << endl;
 #endif
+        }
     }
 
     MPI_Finalize();

@@ -38,25 +38,29 @@ void save_img(vector<double>& img, vector<int> shape, string fname){
 }
 
 int main(int argc, char** argv) {
-    int num_runs = 5;
     int samples_per_pixel = 40;
     double tolerance = 0.01;
     int n_small_balls = 100;
     Camera camera;
     camera.move({1,0,0}, {1,1,0});
-
     auto scene = generate_random_scene(n_small_balls);
 
-    auto time_adaptive = time_seconds_adaptive(camera, scene, tolerance, samples_per_pixel, num_runs);
-    auto img = camera.render_range_adaptive(scene, 0, camera.H*camera.W, tolerance, samples_per_pixel);
-    save_img(img, {camera.H, camera.W, 4}, "serial_adaptive_"+to_string(num_runs)+"_"+to_string(samples_per_pixel));
-    auto time_fixed = time_seconds_fixed(camera, scene, samples_per_pixel, num_runs);
-    img = camera.render(scene, samples_per_pixel);
-    save_img(img, {camera.H, camera.W, 3}, "serial_fixed_"+to_string(num_runs)+"_"+to_string(samples_per_pixel));
+    if(argc > 1){ //Generate Output image
+        string image_name = argv[1];
+        auto img = camera.render_range_adaptive(scene, 0, camera.H*camera.W, tolerance, samples_per_pixel);
+        save_img(img, {camera.H, camera.W, 4}, image_name+"adaptive_P=1");
+        img = camera.render(scene, samples_per_pixel);
+        save_img(img, {camera.H, camera.W, 3},image_name+"fixed_P=1");
+    } else { //Benchmarks
+        int num_runs = 5;
+        auto time_adaptive = time_seconds_adaptive(camera, scene, tolerance, samples_per_pixel, num_runs);
+        auto time_fixed = time_seconds_fixed(camera, scene, samples_per_pixel, num_runs);
+        ofstream output;
+        output.open("data_serial_"+to_string(samples_per_pixel)+"_"+to_string(tolerance)+".txt");
+        output << "Num runs used:"<<to_string(num_runs)<<"\n";
+        output<<"Adaptive avg time: " << time_adaptive << "s\n";
+        output << "Fixed avg time: " << time_fixed << "s";
+    }
 
-    ofstream output;
-    output.open("data_serial_"+to_string(samples_per_pixel)+"_"+to_string(tolerance)+".txt");
-    output << "Num runs used:"<<to_string(num_runs)<<"\n";
-    output<<"Adaptive avg time: " << time_adaptive << "s\n";
-    output << "Fixed avg time: " << time_fixed << "s";
+
 }
